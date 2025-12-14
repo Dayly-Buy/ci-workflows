@@ -34,7 +34,7 @@ on:
         default: false
 
       run_android_build:
-        description: "Reserved for Phase 4 (Android build). Not used yet."
+        description: "Build Android debug APK and upload it as an artifact"
         type: boolean
         required: false
         default: false
@@ -66,18 +66,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -f yarn.lock ]; then
+
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            echo "manager=npm" >> "$GITHUB_OUTPUT"
+            echo "cache=npm" >> "$GITHUB_OUTPUT"
+          elif [ -f yarn.lock ]; then
             echo "manager=yarn" >> "$GITHUB_OUTPUT"
+            echo "cache=yarn" >> "$GITHUB_OUTPUT"
           elif [ -f pnpm-lock.yaml ]; then
             echo "manager=pnpm" >> "$GITHUB_OUTPUT"
+            echo "cache=pnpm" >> "$GITHUB_OUTPUT"
           else
             echo "manager=npm" >> "$GITHUB_OUTPUT"
+            echo "cache=npm" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
-          cache: npm
+          cache: ${{ steps.pm.outputs.cache }}
 
       - name: Enable Corepack (for Yarn/PNPM)
         if: ${{ steps.pm.outputs.manager != 'npm' }}
@@ -87,6 +95,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           if [ "${{ steps.pm.outputs.manager }}" = "yarn" ]; then
             yarn install --frozen-lockfile
           elif [ "${{ steps.pm.outputs.manager }}" = "pnpm" ]; then
@@ -97,6 +106,7 @@ jobs:
             else
               npm install
             fi
+          fi
 
       - name: Lint (only if enabled AND script exists)
         if: ${{ inputs.run_lint }}
@@ -147,7 +157,7 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
 
   snyk:
     name: snyk
@@ -171,12 +181,12 @@ jobs:
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
-          args: --severity-threshold=medium
+          args: test --severity-threshold=medium
 
   android-build:
     name: android-build
     runs-on: ubuntu-latest
-    needs: quality
+    needs: [quality]
     if: ${{ inputs.run_android_build }}
     steps:
       - name: Checkout
@@ -193,15 +203,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -f package-lock.json ]; then
+
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
             echo "install_cmd=npm ci" >> "$GITHUB_OUTPUT"
             echo "cache=npm" >> "$GITHUB_OUTPUT"
           elif [ -f yarn.lock ]; then
             echo "install_cmd=yarn install --frozen-lockfile" >> "$GITHUB_OUTPUT"
             echo "cache=yarn" >> "$GITHUB_OUTPUT"
+          elif [ -f pnpm-lock.yaml ]; then
+            echo "install_cmd=pnpm install --frozen-lockfile" >> "$GITHUB_OUTPUT"
+            echo "cache=pnpm" >> "$GITHUB_OUTPUT"
           else
             echo "install_cmd=npm install" >> "$GITHUB_OUTPUT"
             echo "cache=npm" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -209,8 +224,8 @@ jobs:
           node-version: ${{ inputs.node_version }}
           cache: ${{ steps.pm.outputs.cache }}
 
-      - name: Enable Corepack (for yarn)
-        if: ${{ steps.pm.outputs.cache == 'yarn' }}
+      - name: Enable Corepack (for yarn/pnpm)
+        if: ${{ steps.pm.outputs.cache != 'npm' }}
         run: corepack enable
 
       - name: Install JS dependencies
