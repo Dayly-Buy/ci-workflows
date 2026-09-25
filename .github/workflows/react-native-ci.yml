@@ -9,6 +9,15 @@ on:
         required: false
         default: "20"
 
+      working_directory:
+        description: >-
+          Directory holding the package.json whose scripts are run. Defaults to
+          the repo root. Firebase Functions repos pass "functions", because that
+          is where their package.json, lockfile and tests live.
+        type: string
+        required: false
+        default: "."
+
       run_lint:
         description: "Run lint step if enabled"
         type: boolean
@@ -65,16 +74,30 @@ jobs:
       - name: Detect package manager
         id: pm
         shell: bash
+        working-directory: ${{ inputs.working_directory }}
         run: |
           set -euo pipefail
-          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
-            echo "manager=npm" >> "$GITHUB_OUTPUT"
+          if [ -f package-lock.json ]; then
+            manager=npm; lock=package-lock.json
+          elif [ -f npm-shrinkwrap.json ]; then
+            manager=npm; lock=npm-shrinkwrap.json
           elif [ -f yarn.lock ]; then
-            echo "manager=yarn" >> "$GITHUB_OUTPUT"
+            manager=yarn; lock=yarn.lock
           elif [ -f pnpm-lock.yaml ]; then
-            echo "manager=pnpm" >> "$GITHUB_OUTPUT"
+            manager=pnpm; lock=pnpm-lock.yaml
           else
-            echo "manager=npm" >> "$GITHUB_OUTPUT"
+            manager=npm; lock=""
+          fi
+          echo "manager=$manager" >> "$GITHUB_OUTPUT"
+          # Path is relative to the repo root, because setup-node's cache key is.
+          wd="${{ inputs.working_directory }}"
+          wd="${wd%/}"
+          if [ -z "$lock" ]; then
+            echo "lockfile=" >> "$GITHUB_OUTPUT"
+          elif [ "$wd" = "." ] || [ -z "$wd" ]; then
+            echo "lockfile=$lock" >> "$GITHUB_OUTPUT"
+          else
+            echo "lockfile=$wd/$lock" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Setup Node.js
@@ -82,6 +105,7 @@ jobs:
         with:
           node-version: ${{ inputs.node_version }}
           cache: ${{ steps.pm.outputs.manager }}
+          cache-dependency-path: ${{ steps.pm.outputs.lockfile }}
 
       - name: Enable Corepack (for Yarn/PNPM)
         if: ${{ steps.pm.outputs.manager != 'npm' }}
@@ -89,6 +113,7 @@ jobs:
 
       - name: Install dependencies
         shell: bash
+        working-directory: ${{ inputs.working_directory }}
         run: |
           set -euo pipefail
           if [ "${{ steps.pm.outputs.manager }}" = "yarn" ]; then
@@ -106,6 +131,7 @@ jobs:
       - name: Lint (only if enabled AND script exists)
         if: ${{ inputs.run_lint }}
         shell: bash
+        working-directory: ${{ inputs.working_directory }}
         run: |
           set -euo pipefail
           HAS_LINT="$(node -e "const p=require('./package.json'); console.log(p.scripts && p.scripts.lint ? 'true' : 'false')")"
@@ -113,12 +139,13 @@ jobs:
             echo "Running lint..."
             npm run lint
           else
-            echo "run_lint=true but no 'lint' script found in package.json. Skipping."
+            echo "::warning title=Lint did not run::run_lint=true but ${{ inputs.working_directory }}/package.json has no 'lint' script. Nothing was checked."
           fi
 
       - name: Tests (only if enabled AND script exists)
         if: ${{ inputs.run_tests }}
         shell: bash
+        working-directory: ${{ inputs.working_directory }}
         run: |
           set -euo pipefail
           HAS_TEST="$(node -e "const p=require('./package.json'); console.log(p.scripts && p.scripts.test ? 'true' : 'false')")"
@@ -126,7 +153,7 @@ jobs:
             echo "Running tests..."
             npm test
           else
-            echo "run_tests=true but no 'test' script found in package.json. Skipping."
+            echo "::warning title=Tests did not run::run_tests=true but ${{ inputs.working_directory }}/package.json has no 'test' script. Nothing was checked."
           fi
 
   sonar:
@@ -179,6 +206,7 @@ jobs:
 
       - name: Run Snyk (fail on >= medium)
         shell: bash
+        working-directory: ${{ inputs.working_directory }}
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         run: |
