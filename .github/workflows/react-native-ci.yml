@@ -155,6 +155,43 @@ jobs:
           else
             echo "::warning title=Tests did not run::run_tests=true but ${{ inputs.working_directory }}/package.json has no 'test' script. Nothing was checked."
           fi
+      # Firestore rules are a second enforcement surface, and they need the
+      # emulator (and therefore Java) to test. Only a repo that actually has a
+      # test:rules script pays for any of this -- same shape as the lint and
+      # test steps above.
+      - name: Detect Firestore rules tests
+        id: rules
+        if: ${{ inputs.run_tests }}
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          set -euo pipefail
+          HAS="$(node -e "const p=require('./package.json'); console.log(p.scripts && p.scripts['test:rules'] ? 'true' : 'false')")"
+          echo "has=$HAS" >> "$GITHUB_OUTPUT"
+          echo "test:rules script present: $HAS"
+
+      - name: Setup Java (Firestore emulator)
+        if: ${{ inputs.run_tests && steps.rules.outputs.has == 'true' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # The emulator jar is a ~60MB download that setup-node's cache does not
+      # cover, so it gets its own.
+      - name: Cache the Firestore emulator
+        if: ${{ inputs.run_tests && steps.rules.outputs.has == 'true' }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ runner.os }}
+
+      - name: Firestore rules tests
+        if: ${{ inputs.run_tests && steps.rules.outputs.has == 'true' }}
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+        run: npm run test:rules
+
 
   sonar:
     name: sonar
