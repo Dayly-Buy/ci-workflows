@@ -175,7 +175,10 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          # 21, not 17: firebase-tools refuses anything older --
+          # "no longer supports Java version before 21". The android-build
+          # job below still needs 17 for Gradle, so they differ on purpose.
+          java-version: "21"
 
       # The emulator jar is a ~60MB download that setup-node's cache does not
       # cover, so it gets its own.
