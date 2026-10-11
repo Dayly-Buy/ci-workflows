@@ -203,10 +203,15 @@ jobs:
     if: ${{ inputs.run_sonar }}
     timeout-minutes: 20
     steps:
+      # The secret reaches the script through env, never pasted into its text
+      # (AUD-067): GitHub masks it in the log, but text would put the value on
+      # the process command line.
       - name: Fail if SONAR_TOKEN is missing
         shell: bash
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          if [ -z "${{ secrets.SONAR_TOKEN }}" ]; then
+          if [ -z "$SONAR_TOKEN" ]; then
             echo "SONAR_TOKEN secret is missing. Add it to the calling repo, then pass it through workflow_call."
             exit 1
           fi
@@ -231,8 +236,10 @@ jobs:
     steps:
       - name: Fail if SNYK_TOKEN is missing
         shell: bash
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         run: |
-          if [ -z "${{ secrets.SNYK_TOKEN }}" ]; then
+          if [ -z "$SNYK_TOKEN" ]; then
             echo "SNYK_TOKEN secret is missing. Add it to the calling repo, then pass it through workflow_call."
             exit 1
           fi
@@ -240,10 +247,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Faster than the docker-based node action, and matches your local CLI behavior
+      # Faster than the docker-based node action, and matches your local CLI behavior.
+      # Pinned to the full commit of snyk/actions v1.0.0 (AUD-067): this job holds
+      # SNYK_TOKEN, so a third-party action must not be whatever `master` points
+      # at on the day of the run.
       - name: Setup Snyk CLI
-        uses: snyk/actions/setup@master
+        uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
 
+      # The lockfile is the one the quality job found, not npm's by assumption.
       - name: Run Snyk (fail on >= medium)
         shell: bash
         working-directory: ${{ inputs.working_directory }}
@@ -252,7 +263,14 @@ jobs:
         run: |
           set -euo pipefail
           snyk --version
-          snyk test --file=package-lock.json --severity-threshold=medium
+          for lock in package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml; do
+            if [ -f "$lock" ]; then
+              snyk test --file="$lock" --severity-threshold=medium
+              exit 0
+            fi
+          done
+          echo "::error title=No lockfile::Snyk needs a lockfile in ${{ inputs.working_directory }}"
+          exit 1
 
   android-build:
     name: android-build
