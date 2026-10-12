@@ -331,8 +331,15 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # The action's default list is "tools platform-tools", and Google has
+      # retired the "tools" package: sdkmanager stopped with "Failed to find
+      # package 'tools'" (AUD-084, dayly-buy-market run 38270631525). Gradle
+      # fetches the platform and build-tools it needs, under the licences this
+      # step accepts.
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Setup Gradle cache
         uses: gradle/actions/setup-gradle@v4
